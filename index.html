@@ -680,13 +680,17 @@ footer{background:linear-gradient(180deg,rgba(5,7,14,0),rgba(5,7,14,.72))!import
       <div class="rfield"><label for="rmsg2">Задача или объём партии</label>
         <textarea id="rmsg2" placeholder="Например: нужны 50 промышленных роботов для сборки, бюджет ~2 млн ₽"></textarea></div>
 
+      <input type="hidden" name="_subject" value="Заявка с сайта FABRIC DIRECT">
+      <input type="hidden" name="_template" value="table">
+      <input type="hidden" name="_captcha" value="false">
+      <input type="hidden" name="_honey" value="botcheck-value">
       <div class="rbtns">
-        <button class="rbtn tg" type="submit">Отправить в Telegram</button>
-        <button class="rbtn mail" type="button" id="rmail">Отправить на почту</button>
+        <button class="rbtn tg" type="submit" id="rsend">Отправить заявку</button>
+        <button class="rbtn mail" type="button" id="rmail">Отправить в Telegram</button>
         <button class="rbtn copy" type="button" id="rcopy">Скопировать текст</button>
       </div>
       <div class="rmsg" id="rfeedback" role="status"></div>
-      <p class="rnote" id="rnote">Форма не хранит данные на сервере: заявка формируется в браузере и уходит только туда, куда вы её отправили.</p>
+      <p class="rnote" id="rnote">Заявка отправляется напрямую на нашу почту — данные нигде не сохраняются.</p>
     </form>
   </div>
 </section>
@@ -732,9 +736,12 @@ footer{background:linear-gradient(180deg,rgba(5,7,14,0),rgba(5,7,14,.72))!import
 </script>
 
 <script>
+<script>
 (function(){
   var OWNER='bloodnyak001', MAIL='Bloodnyak001@yandex.ru';
+  var ENDPOINT='https://formsubmit.co/ajax/Bloodnyak001@yandex.ru';
   var form=document.getElementById('rform'),fb=document.getElementById('rfeedback');
+  var busy=false;
   function val(id){var e=document.getElementById(id);return e?e.value.trim():'';}
   function build(){
     var name=val('rname'),contact=val('rcontact'),cat=val('rcat'),msg=val('rmsg2');
@@ -743,40 +750,67 @@ footer{background:linear-gradient(180deg,rgba(5,7,14,0),rgba(5,7,14,.72))!import
       fb.textContent='Заполните имя и контакт — так мы сможем ответить.';
       return null;
     }
-    return 'Новая заявка с сайта FABRIC DIRECT\n\n'+
-      'Имя: '+name+'\n'+
-      'Контакт: '+contact+'\n'+
-      'Категория: '+cat+'\n'+
-      (msg?('Задача: '+msg+'\n'):'')+
-      '\nОтправлено с сайта';
+    var text='Новая заявка с сайта FABRIC DIRECT\n\nИмя: '+name+'\nКонтакт: '+contact+'\nКатегория: '+cat+'\n'+
+      (msg?('Задача: '+msg+'\n'):'')+'\nОтправлено с сайта '+new Date().toLocaleString('ru-RU');
+    return {name:name,contact:contact,cat:cat,msg:msg,text:text};
   }
+  function say(txt,cls){fb.className='rmsg '+(cls||'ok');fb.textContent=txt;}
+  function setBusy(on){busy=on;var b=document.getElementById('rsend');if(b){b.disabled=on;b.textContent=on?'Отправляем…':'Отправить заявку';}}
   form.addEventListener('submit',function(e){
     e.preventDefault();
-    var t=build(); if(!t) return;
-    var url='https://t.me/'+OWNER+'?text='+encodeURIComponent(t);
-    window.open(url,'_blank','noopener');
-    fb.className='rmsg ok';
-    fb.textContent='Открыли Telegram — нажмите «Отправить», и заявка сразу у нас. Если окно не открылось, скопируйте текст кнопкой ниже.';
+    if(busy) return;
+    var d=build(); if(!d) return;
+    setBusy(true);
+    say('Отправляем заявку…');
+    var payload={
+      name:d.name,
+      email:(d.contact.indexOf('@')>-1 && d.contact.indexOf(' ')<0)?d.contact:'no-reply@fabric-direct.site',
+      contact:d.contact,
+      _subject:'Заявка с сайта FABRIC DIRECT',
+      _template:'table',
+      _captcha:'false',
+      _honey:'botcheck-value',
+      message:'Имя: '+d.name+'\nКонтакт: '+d.contact+'\nКатегория: '+d.cat+'\n'+(d.msg?('Задача: '+d.msg+'\n'):'')+'\nОтправлено с сайта '+new Date().toLocaleString('ru-RU')
+    };
+    var done=false;
+    function ok(){ if(done) return; done=true; setBusy(false);
+      say('Заявка отправлена! Мы свяжемся с вами в ближайшее время.','ok'); form.reset(); }
+    function fail(m){ if(done) return; done=true; setBusy(false); say(m,'err'); }
+    function fallback(){
+      try{ var t=build();
+        window.open('https://t.me/'+OWNER+'?text='+encodeURIComponent(t.text),'_blank','noopener');
+        fail('Не удалось отправить напрямую — открыли Telegram с готовым текстом, нажмите «Отправить».');
+      }catch(e){ fail('Не удалось отправить. Напишите нам в Telegram: @'+OWNER); }
+    }
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var tm=setTimeout(function(){ if(!done&&ctrl){ctrl.abort();} },15000);
+    fetch(ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify(payload), signal:ctrl?ctrl.signal:undefined})
+      .then(function(r){return r.json().then(function(j){return {s:r.status,j:j};}).catch(function(){return {s:r.status,j:null};});})
+      .then(function(res){
+        clearTimeout(tm);
+        if(res.s>=200&&res.s<300&&res.j&&String(res.j.success)==='true'){ok();return;}
+        if(res.j&&res.j.message&&/activat/i.test(res.j.message)){
+          fail('Форма ещё не активирована — мы отправили письмо со ссылкой активации на почту. Проверьте inbox, один раз кликните по ссылке, и заявки заработают.');
+          return;
+        }
+        fail('Не удалось отправить. Попробуйте ещё раз или напишите в Telegram: @'+OWNER);
+      })
+      .catch(function(){ clearTimeout(tm); if(!done){ fallback(); } });
   });
   document.getElementById('rmail').addEventListener('click',function(){
-    var t=build(); if(!t) return;
-    var subject='Заявка с сайта FABRIC DIRECT';
-    window.location.href='mailto:'+MAIL+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(t);
-    fb.className='rmsg ok';
-    fb.textContent='Открыли почтовую программу с готовым письмом — осталось нажать «Отправить».';
+    var d=build(); if(!d) return;
+    window.location.href='mailto:'+MAIL+'?subject='+encodeURIComponent('Заявка с сайта FABRIC DIRECT')+'&body='+encodeURIComponent(d.text);
+    say('Открыли Telegram с готовым текстом — нажмите «Отправить».','ok');
   });
   document.getElementById('rcopy').addEventListener('click',function(){
-    var t=build(); if(!t) return;
+    var d=build(); if(!d) return;
     if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(t).then(function(){
-        fb.className='rmsg ok';fb.textContent='Текст заявки скопирован — вставьте его в Telegram или почту.';
-      },function(){fb.className='rmsg err';fb.textContent='Не удалось скопировать. Выделите текст вручную.';});
-    } else {
-      fb.className='rmsg err';fb.textContent='Браузер не поддерживает копирование. Используйте кнопку Telegram.';
-    }
+      navigator.clipboard.writeText(d.text).then(function(){say('Текст заявки скопирован.','ok');},function(){say('Не удалось скопировать. Выделите текст вручную.','err');});
+    } else { say('Браузер не поддерживает копирование.','err'); }
   });
 })();
-</script>
+</script>/script>
 <footer class="ft">
   <div class="wrap ft-in">
     <div class="ft-top">
